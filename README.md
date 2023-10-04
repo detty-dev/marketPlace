@@ -1,66 +1,43 @@
-## Foundry
+createOrder
+    - set token owner to msg.sender 
+    - address tokenAddress;
+    - uint256 tokenId;
+    - uint256 price;
+    - bool active;
+    - address seller;
+    - uint256 deadline;
+    - bytes signature;
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+    checks to create ERC721 tokens
+     - require the token user address is active to sell nft
+    - require the price > zero
+    - require invalid user address cant create erc721
+    - require owner approve address(this) to spend tokenAddress
+    - require tokenAddresss ! address(0)
+    - require address has code
+    -require deadline > block.stamp
+    - require there is deadline for the token to be sold, if the deadline passes it cant be sold again
+    
+    logic
+    - increase the orderLIst
+    - store in data in storage
+    -emit event
 
-Foundry consists of:
+executeOrder (payable)
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+-orderId
 
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+    check for executing orders
+    - require signature is signed by owner
+    - require msg.value == order.price
+    - require blockstamp <= order.deadline
+    - require the seller signs the previous data before executing new order
+    - require the signature is verified to be the owner address before executing order
+    
+    logic 
+    - retrieve data from storage
+    -transfer nft from sellers to buyers
+    - transfer ethers from buyer to seller
+    -emit event
+ 
+- 
