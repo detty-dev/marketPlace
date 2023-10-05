@@ -1,69 +1,245 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.21;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
 
-import "forge-std/Test.sol";
-import "src/ERC721.sol";
+import {Marketplace} from "../src/Marketplace.sol";
+import "../src/ERC721Mock.sol";
+import "./Helpers.sol";
 
-contract ERC721Test is Test {
-    ERC721 marketPlace;
+contract MarketPlaceTest is Helpers {
+    Marketplace mPlace;
+    OurNFT nft;
+
+    uint256 currentListingId;
+
+    address userA;
+    address userB;
+
+    uint256 privKeyA;
+    uint256 privKeyB;
+
+    Marketplace.Listing l;
 
     function setUp() public {
-      marketPlace = new HelloWorld("Foundry is fast!");
-      address noah = address('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
-    address sofia = address('0x70997970C51812dc3A010C7d01b50e0d17dc79C8');
-  }
+        mPlace = new Marketplace();
+        nft = new OurNFT();
 
-    function testMint() public {
-      marketPlace.mint(noah, "testhash");
-      address owner_of = marketPlace.ownerOf(0);
-      assertEq(noah, owner_of);
+        (userA, privKeyA) = mkaddr("USERA");
+        (userB, privKeyB) = mkaddr("USERB");
+
+        l = Marketplace.Listing({
+            token: address(nft),
+            tokenId: 1,
+            price: 1 ether,
+            sig: bytes(""),
+            deadline: 0,
+            lister: address(0),
+            active: false
+        });
+
+        nft.mint(userA, 1);
     }
 
-    function testTransfer() public {
-    marketPlace.mint(noah, "testhash");
-    vm.startPrank(noah);
-    marketPlace.safeTransferFrom(noah, sofia, 0);
+    function testOwnerCannotCreateListing() public {
+        l.lister = userB;
+        switchSigner(userB);
 
-  address ownerOf = marketPlace.ownerOf(0);
-  assertEq(sofia, ownerOf);
-  }
+        vm.expectRevert(Marketplace.NotOwner.selector);
+        mPlace.createListing(l);
+    }
 
-  function testBalance() public {
-  marketPlace.mint(sofia, "testhash");
-  marketPlace.mint(sofia, "testhash");
-  marketPlace.mint(sofia, "testhash");
+    function testNonApprovedNFT() public {
+        switchSigner(userA);
+        vm.expectRevert(Marketplace.NotApproved.selector);
+        mPlace.createListing(l);
+    }
 
-  uint balance = marketPlace.balanceOf(sofia);
-  assertEq(balance, 3);
-  }
+    function testMinPriceTooLow() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.price = 0;
+        vm.expectRevert(Marketplace.MinPriceTooLow.selector);
+        mPlace.createListing(l);
+    }
 
-  function testSignature() public {
-        uint256 privateKey = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
-        //  address seller;
-        address tokenAddress = 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955;
-        uint256 tokenId = 0;
-        uint256 price = 2;
-        uint256 deadline = 234567890;
-      
-        address seller = vm.addr(privateKey);
+    function testMinDeadline() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        vm.expectRevert(Marketplace.DeadlineTooSoon.selector);
+        mPlace.createListing(l);
+    }
 
-       
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(seller, tokenAddress, tokenId, price,  deadline)
+    function testMinDuration() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 59 minutes);
+        vm.expectRevert(Marketplace.MinDurationNotMet.selector);
+        mPlace.createListing(l);
+    }
+
+    function testValidSig() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyB
         );
+        vm.expectRevert(Marketplace.InvalidSignature.selector);
+        mPlace.createListing(l);
+    }
 
-        (uint8 v,bytes32 r, bytes32 s) = vm.sign(privateKey, messageHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-        address signer = ecrecover(messageHash, v, r, s);
+    // EDIT LISTING
+    function testEditNonValidListing() public {
+        switchSigner(userA);
+        vm.expectRevert(Marketplace.ListingNotExistent.selector);
+        mPlace.editListing(1, 0, false);
+    }
 
-        assertEq(signer, seller);
+    function testEditListingNotOwner() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        // vm.expectRevert(Marketplace.ListingNotExistent.selector);
+        uint256 lId = mPlace.createListing(l);
 
-        // Test invalid message
-        bytes32 invalidHash = keccak256("Not signed by Seller");
-        signer = ecrecover(invalidHash, v, r, s);
+        switchSigner(userB);
+        vm.expectRevert(Marketplace.NotOwner.selector);
+        mPlace.editListing(lId, 0, false);
+    }
 
-        market.createListing(tokenAddress, tokenId, price, signature, deadline);
+    function testEditListing() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        uint256 lId = mPlace.createListing(l);
+        mPlace.editListing(lId, 0.01 ether, false);
 
-        assertTrue(signer != seller);
+        Marketplace.Listing memory t = mPlace.getListing(lId);
+        assertEq(t.price, 0.01 ether);
+        assertEq(t.active, false);
+    }
+
+    // EXECUTE LISTING
+    function testExecuteNonValidListing() public {
+        switchSigner(userA);
+        vm.expectRevert(Marketplace.ListingNotExistent.selector);
+        mPlace.executeListing(1);
+    }
+
+    function testExecuteExpiredListing() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+    }
+
+    function testExecuteListingNotActive() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        uint256 lId = mPlace.createListing(l);
+        mPlace.editListing(lId, 0.01 ether, false);
+        switchSigner(userB);
+        vm.expectRevert(Marketplace.ListingNotActive.selector);
+        mPlace.executeListing(lId);
+    }
+
+    function testExecutePriceNotMet() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        uint256 lId = mPlace.createListing(l);
+        switchSigner(userB);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Marketplace.PriceNotMet.selector,
+                l.price - 0.9 ether
+            )
+        );
+        mPlace.executeListing{value: 0.9 ether}(lId);
+    }
+
+    function testExecutePriceMismatch() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        uint256 lId = mPlace.createListing(l);
+        switchSigner(userB);
+        vm.expectRevert(
+            abi.encodeWithSelector(Marketplace.PriceMismatch.selector, l.price)
+        );
+        mPlace.executeListing{value: 1.1 ether}(lId);
+    }
+
+    function testExecute() public {
+        switchSigner(userA);
+        nft.setApprovalForAll(address(mPlace), true);
+        l.deadline = uint88(block.timestamp + 120 minutes);
+        // l.price = 1 ether;
+        l.sig = constructSig(
+            l.token,
+            l.tokenId,
+            l.price,
+            l.deadline,
+            l.lister,
+            privKeyA
+        );
+        uint256 lId = mPlace.createListing(l);
+        switchSigner(userB);
+        uint256 userABalanceBefore = userA.balance;
+
+        mPlace.executeListing{value: l.price}(lId);
+
+        uint256 userABalanceAfter = userA.balance;
+
+        Marketplace.Listing memory t = mPlace.getListing(lId);
+        assertEq(t.price, 1 ether);
+        assertEq(t.active, false);
+
+        assertEq(t.active, false);
+        assertEq(ERC721(l.token).ownerOf(l.tokenId), userB);
+        assertEq(userABalanceAfter, userABalanceBefore + l.price);
     }
 }

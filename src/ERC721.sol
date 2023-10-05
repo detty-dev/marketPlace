@@ -1,72 +1,132 @@
-//SPDX-License-Identifier: MIT
-pragma solidity ^0.8.21;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
 
-import "OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "solmate/tokens/ERC721.sol";
+import {SignUtils} from "./libraries/SignUtils.sol";
 
-
-
-
-contract NFTMarketplace  is ERC721 {
-
-    struct Order {
-        address tokenOwner;
-        address tokenAddress;
+contract Marketplace {
+    struct Listing {
+        address token;
         uint256 tokenId;
         uint256 price;
+        bytes sig;
+        // Slot 4
+        uint88 deadline;
+        address lister;
         bool active;
-        address seller;
-        uint256 deadline;
-        bytes signature;
     }
 
-    mapping(uint256 => Order) public orderList;
+    mapping(uint256 => Listing) public listings;
+    address public admin;
+    uint256 public listingId;
 
-    uint256 public orderCount = 0;
+    /* ERRORS */
+    error NotOwner();
+    error NotApproved();
+    error MinPriceTooLow();
+    error DeadlineTooSoon();
+    error MinDurationNotMet();
+    error InvalidSignature();
+    error ListingNotExistent();
+    error ListingNotActive();
+    error PriceNotMet(int256 difference);
+    error ListingExpired();
+    error PriceMismatch(uint256 originalPrice);
 
-    IERC721 public erc721Contract;
+    /* EVENTS */
+    event ListingCreated(uint256 indexed listingId, Listing);
+    event ListingExecuted(uint256 indexed listingId, Listing);
+    event ListingEdited(uint256 indexed listingId, Listing);
 
-    constructor(address _erc721Address) {
-        erc721Contract = IERC721(_erc721Address);
+    constructor() {
+        admin = msg.sender;
     }
-   
-    event OrderCreated( uint256 indexed orderId, address indexed tokenOwner,address indexed tokenAddress,  uint256 tokenId, uint256 price,uint256 deadline);
-    event OrderExecuted(uint256 indexed orderId, address indexed buyer, address indexed seller, address tokenAddress, uint256 tokenId, uint256 price);
-              
-function createOrder(address _tokenAddress, uint256 _tokenId,uint256 _price,uint256 _deadline,bytes memory _signature) external {
-        require(_price > 0, "Price must be greater than zero");
-        require(_tokenAddress != address(0), "Invalid token address");
-        require(block.timestamp < _deadline, "Deadline must be in the future");
-        require(erc721Contract.ownerOf(_tokenId) == msg.sender, "Only the owner can create an order");
-        require(erc721Contract.getApproved(_tokenId) == address(this), "Must be approved to spend the token");
 
-        orderCount++;
-        orderList[orderCount] = Order(
+    function createListing(Listing calldata l) public returns (uint256 lId) {
+        if (ERC721(l.token).ownerOf(l.tokenId) != msg.sender) revert NotOwner();
+        if (!ERC721(l.token).isApprovedForAll(msg.sender, address(this)))
+            revert NotApproved();
+        if (l.price < 0.01 ether) revert MinPriceTooLow();
+        if (l.deadline < block.timestamp) revert DeadlineTooSoon();
+        if (l.deadline - block.timestamp < 60 minutes)
+            revert MinDurationNotMet();
+
+        // Assert signature
+        if (
+            !SignUtils.isValid(
+                SignUtils.constructMessageHash(
+                    l.token,
+                    l.tokenId,
+                    l.price,
+                    l.deadline,
+                    l.lister
+                ),
+                l.sig,
+                msg.sender
+            )
+        ) revert InvalidSignature();
+
+        // append to Storage
+        Listing storage li = listings[listingId];
+        li.token = l.token;
+        li.tokenId = l.tokenId;
+        li.price = l.price;
+        li.sig = l.sig;
+        li.deadline = uint88(l.deadline);
+        li.lister = msg.sender;
+        li.active = true;
+
+        // Emit event
+        emit ListingCreated(listingId, l);
+        lId = listingId;
+        listingId++;
+        return lId;
+    }
+
+    function executeListing(uint256 _listingId) public payable {
+        if (_listingId >= listingId) revert ListingNotExistent();
+        Listing storage listing = listings[_listingId];
+        if (listing.deadline < block.timestamp) revert ListingExpired();
+        if (!listing.active) revert ListingNotActive();
+        if (listing.price < msg.value) revert PriceMismatch(listing.price);
+        if (listing.price != msg.value)
+            revert PriceNotMet(int256(listing.price) - int256(msg.value));
+
+        // Update state
+        listing.active = false;
+
+        // transfer
+        ERC721(listing.token).transferFrom(
+            listing.lister,
             msg.sender,
-            _tokenAddress,
-            _tokenId,
-            _price,
-            true,
-            _deadline,
-            _signature
+            listing.tokenId
         );
 
-        emit OrderCreated(orderCount, msg.sender, _tokenAddress, _tokenId, _price, _deadline);
+        // transfer eth
+        payable(listing.lister).transfer(listing.price);
+
+        // Update storage
+        emit ListingExecuted(_listingId, listing);
     }
 
-    function executeOrder(uint256 _orderId, bytes memory _signature) external payable {
-        Order storage order = orderList[_orderId];
-        require(order.active, "Order is not active");
-        require(order.deadline >= block.timestamp, "Order deadline has passed");
-        require(msg.value == order.price, "Incorrect payment amount");
-        
-        erc721Contract.safeTransferFrom(order.tokenOwner, msg.sender, order.tokenId);
+    function editListing(
+        uint256 _listingId,
+        uint256 _newPrice,
+        bool _active
+    ) public {
+        if (_listingId >= listingId) revert ListingNotExistent();
+        Listing storage listing = listings[_listingId];
+        if (listing.lister != msg.sender) revert NotOwner();
+        listing.price = _newPrice;
+        listing.active = _active;
+        emit ListingEdited(_listingId, listing);
+    }
 
-        payable(order.tokenOwner).transfer(order.price);
-
-        order.active = false;
-
-        emit OrderExecuted(_orderId, msg.sender, order.tokenOwner, order.tokenAddress, order.tokenId, order.price);
+    // add getter for listing
+    function getListing(
+        uint256 _listingId
+    ) public view returns (Listing memory) {
+        // if (_listingId >= listingId)
+        return listings[_listingId];
     }
 }
-    
