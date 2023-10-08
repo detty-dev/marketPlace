@@ -11,7 +11,7 @@ contract Marketplace {
         uint256 price;
         bytes signature;
         // Slot 4
-        uint88 deadline;
+        uint256 deadline;
         address ownerAddress;
         bool isActive;
     }
@@ -28,12 +28,12 @@ contract Marketplace {
     constructor() {}
 
     function createOrder(OrderNFT calldata list) public returns (uint256 ListId) {
-        require(ERC721(list.token).ownerOf(list.tokenId) != msg.sender, "NotOwner");
-        require (!ERC721(list.token).isApprovedForAll(msg.sender, address(this)), "Not Eligible");
-        require (list.price < 0.01 ether, "MinPriceTooLow");
-        require (list.deadline < block.timestamp, "DeadlineTooSoon"); 
-        require (list.deadline - block.timestamp < 60 minutes, "MinDurationNotMet");
-        require(!SignUtils.isValid(SignUtils.constructMessageHash(
+        require(ERC721(list.token).ownerOf(list.tokenId) == msg.sender, "NotOwner");
+        require (ERC721(list.token).isApprovedForAll(msg.sender, address(this)), "Not Eligible");
+        require (list.price > 0.01 ether, "MinPriceTooLow");
+        require (list.deadline > block.timestamp, "DeadlineTooSoon"); 
+        require (list.deadline - block.timestamp > 60 minutes, "MinDurationNotMet");
+        require(SignUtils.isValid(SignUtils.constructMessageHash(
                     list.token,
                     list.tokenId,
                     list.price,
@@ -49,7 +49,7 @@ contract Marketplace {
         ListOrder.tokenId = list.tokenId;
         ListOrder.price = list.price;
         ListOrder.signature = list.signature;
-        ListOrder.deadline = uint88(list.deadline);
+        ListOrder.deadline = list.deadline;
         ListOrder.ownerAddress = msg.sender;
         ListOrder.isActive = true;
 
@@ -60,12 +60,12 @@ contract Marketplace {
     }
 
     function executeOrder(uint256 _orderId) public payable {
-        require(_orderId >= orderId, "OrderNotExistent");
+        require(_orderId <= orderId, "OrderNotExistent");
         OrderNFT storage order = orders[_orderId];
-        require (order.deadline < block.timestamp, "OrderExpired");
-        require (!order.isActive, "OrderNotActive");
+        require (order.deadline > block.timestamp, "OrderExpired");
+        require (order.isActive, "OrderNotActive");
         require (order.price < msg.value, "PriceMismatch(order.price)");
-        require (order.price != msg.value, "PriceNotMet(int256(order.price) - int256(msg.value");
+        require (order.price == msg.value, "PriceNotMet(int256(order.price) - int256(msg.value");
 
         order.isActive = false;
        
@@ -80,9 +80,9 @@ contract Marketplace {
     }
 
     function editOrder(uint256 _orderId, uint256 _newPrice, bool _active) public {
-        require (_orderId >= orderId, "OrderNotExistent");
+        require (_orderId <= orderId, "OrderNotExistent");
         OrderNFT storage order = orders[_orderId];
-        require (order.ownerAddress != msg.sender, "NotOwner");
+        require (order.ownerAddress == msg.sender, "NotOwner");
         order.price = _newPrice;
         order.isActive = _active;
         emit OrderEdited(_orderId, order);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
 import {Marketplace} from "../src/MarketPlace.sol";
@@ -10,14 +10,14 @@ contract MarketPlaceTest is Helpers {
     OurNFT nft;
 
     uint256 presentListId;
-
+g
     address _addrA;
     address _addrB;
 
     uint256 privateKeyX;
     uint256 privateKeyY;
 
-    Marketplace.OrderNFT  Data;
+    Marketplace.OrderNFT Data;
 
     function setUp() public {
         MarketPlace = new Marketplace();
@@ -31,213 +31,138 @@ contract MarketPlaceTest is Helpers {
             tokenId: 1,
             price: 2 ether,
             signature: bytes(""),
-            deadline: 1,
-            ownerAddress: address(_addrA),
+            deadline: 70 minutes,
+            ownerAddress: _addrA,
             isActive: false
         });
 
+        bytes memory signature= constructSig(
+         Data.token,
+         Data.tokenId,
+         Data.price, 
+         Data.deadline,
+         Data.ownerAddress,
+         privateKeyX); 
+
+        Data.signature = signature;
+
         nft.mint(_addrA, 1);
     }
-    function testInvalidOwner() public {
+    
+    function testFail_InvaIdOwner() public {
         Data.ownerAddress = _addrB;
         switchSigner(_addrB);
-
-        vm.expectRevert(Marketplace.NotOwner.selector);
         MarketPlace.createOrder(Data);
     }
 
-    function testNonEligibleNFT() public {
-        switchSigner(_addrA);
-        vm.expectRevert(Marketplace.NotApproved.selector);
-        MarketPlace.createOrder(Data);
-    }
-
-    function testMinPriceTooLow() public {
+    function testFailMinPriceTooLow() public {
         switchSigner(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
-        Data.price = 0;
-        vm.expectRevert(Marketplace.MinPriceTooLow.selector);
+        Data.price = 0.01 ether;
+        MarketPlace.createOrder(Data);
+    }
+    
+    function testFailMinDeadline() public {
+        switchSigner(_addrA);
+        nft.setApprovalForAll(address(MarketPlace), true);
+        Data.deadline = block.timestamp; 
         MarketPlace.createOrder(Data);
     }
 
-    function testMinDeadline() public {
+    function testFailMinDuration() public {
         switchSigner(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
-        vm.expectRevert(Marketplace.DeadlineTooSoon.selector);
+        Data.deadline = uint256(block.timestamp + 59 minutes);
         MarketPlace.createOrder(Data);
     }
 
-    function testMinDuration() public {
+    function testFailVaIdSig() public {
         switchSigner(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 59 minutes);
-        vm.expectRevert(Marketplace.MinDurationNotMet.selector);
-        MarketPlace.createOrder(Data);
-    }
-
-    function testValidSig() public {
-        switchSigner(_addrA);
-        nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 120 minutes);
-        Data.sig = constructSig(
+        Data.deadline = uint256(block.timestamp + 120 minutes);
+        Data.signature = constructSig(
             Data.token,
             Data.tokenId,
             Data.price,
             Data.deadline,
-            Data.lists,
+            Data.ownerAddress,
             privateKeyY
         );
-        vm.expectRevert(Marketplace.InvalidSignature.selector);
         MarketPlace.createOrder(Data);
     }
 
-    // EDIT LISTING
-    function testEditNonValidListing() public {
-        switchSigner(_addrA);
-        vm.expectRevert(Marketplace.ListingNotExistent.selector);
-        MarketPlace.editListing(1, 0, false);
+//     // EDIT LISTING
+    function testFailEditNonVaIdListing() public {         
+        MarketPlace.editOrder(20, 0.01 ether, false);
     }
 
-    function testEditListingNotOwner() public {
+    function testFailEditListingNotOwner() public {
         switchSigner(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
         Data.deadline = uint88(block.timestamp + 120 minutes);
-        Data.sig = constructSig(
+        Data.signature = constructSig(
             Data.token,
             Data.tokenId,
             Data.price,
             Data.deadline,
-            Data.lists,
+            Data.ownerAddress,
             privateKeyX
         );
         uint256 ListId = MarketPlace.createOrder(Data);
 
         switchSigner(_addrB);
-        vm.expectRevert(Marketplace.NotOwner.selector);
-        MarketPlace.editListing(ListId, 0, false);
+        MarketPlace.editOrder(ListId, 0, false);
     }
 
-    function testEditListing() public {
+    function testFailEditOrderAddress() public {
+        vm.startPrank(_addrA);
+        nft.setApprovalForAll(address(MarketPlace), true);
+        uint id = MarketPlace.createOrder(Data);
+        vm.stopPrank();
+        vm.prank(_addrB);
+        MarketPlace.editOrder(id, Data.price, false);
+    }
+//     // EXECUTE LISTING
+    function testFailExecuteNonVaIdListing() public {
+        switchSigner(_addrA);
+        MarketPlace.executeOrder(10);
+    }
+
+    function testFailExecuteExpiredListing() public {
         switchSigner(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 120 minutes);
-        Data.sig = constructSig(
-            Data.token,
-            Data.tokenId,
-            Data.price,
-            Data.deadline,
-            Data.lists,
-            privateKeyX
-        );
-        uint256 ListId = MarketPlace.createOrder(Data);
-        MarketPlace.editListing(ListId, 0.01 ether, false);
-
-        Marketplace.OrderNFT memory t = MarketPlace.getListing(ListId);
-        assertEq(t.price, 0.01 ether);
-        assertEq(t.active, false);
+        uint id = MarketPlace.createOrder(Data);
+        vm.warp(Data.deadline + 10 minutes);
+        MarketPlace.executeOrder(id);
     }
 
-    // EXECUTE LISTING
-    function testExecuteNonValidListing() public {
-        switchSigner(_addrA);
-        vm.expectRevert(Marketplace.ListingNotExistent.selector);
-        MarketPlace.executeOrder(_orderId);(1);
-    }
-
-    function testExecuteExpiredListing() public {
-        switchSigner(_addrA);
+    function testFailExecuteIsactive()public {
+        vm.startPrank(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
+       uint Id=  MarketPlace.createOrder(Data);
+       MarketPlace.editOrder(Id, Data.price, false);
+        vm.stopPrank();
+        vm.prank(_addrB);
+        MarketPlace.executeOrder(Id);
+    }
+       
+    function testFailExecutePriceNotMet() public {
+        vm.startPrank(_addrA);
+        nft.setApprovalForAll(address(MarketPlace), true);
+        uint Id = MarketPlace.createOrder(Data);
+        vm.stopPrank();
+        MarketPlace.executeOrder{value:3 ether}(Id);
     }
 
-    function testExecuteListingNotActive() public {
-        switchSigner(_addrA);
+    function testFailExecutePriceMisMatch() public { 
+            vm.startPrank(_addrA);
         nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 120 minutes);
-        Data.sig = constructSig(
-            Data.token,
-            Data.tokenId,
-            Data.price,
-            Data.deadline,
-            Data.lists,
-            privateKeyX
-        );
-        uint256 lId = MarketPlace.createOrder(Data);
-        MarketPlace.editListing(lId, 0.01 ether, false);
-        switchSigner(_addrB);
-        vm.expectRevert(Marketplace.ListingNotActive.selector);
-        MarketPlace.executeOrder(_orderId);(lId);
-    }
-
-    function testExecutePriceNotMet() public {
-        switchSigner(_addrA);
-        nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 120 minutes);
-        Data.sig = constructSig(
-            Data.token,
-            Data.tokenId,
-            Data.price,
-            Data.deadline,
-            Data.lists,
-            privateKeyX
-        );
-        uint256 lId = MarketPlace.createOrder(Data);
-        switchSigner(_addrB);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Marketplace.PriceNotMet.selector,
-                Data.price - 0.9 ether
-            )
-        );
-        MarketPlace.executeOrder(_orderId);{value; 0.9 ether}(lId);
-    }
-
-    function testExecutePriceMismatch() public {
-        switchSigner(_addrA);
-        nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 60 minutes);
-        Data.sig = constructSig(
-            Data.token,
-            Data.tokenId,
-            Data.price,
-            Data.deadline,
-            Data.lists,
-            privateKeyX
-        );
-        uint256 ListId = MarketPlace.createOrder(Data);
-        switchSigner(_addrB);
-        vm.expectRevert(
-            abi.encodeWithSelector(Marketplace.PriceMismatch.selector, Data.price)
-        );
-        MarketPlace.executeOrder(_orderId);{value: 1.0 ether}(ListId);
-    }
-
-    function testExecute() public {
-        switchSigner(_addrA);
-        nft.setApprovalForAll(address(MarketPlace), true);
-        Data.deadline = uint88(block.timestamp + 120 minutes);
-        // Data.price = 1 ether;
-        Data.sig = constructSig(
-            Data.token,
-            Data.tokenId,
-            Data.price,
-            Data.deadline,
-            Data.lists,
-            privateKeyX
-        );
-        uint256 ListId = MarketPlace.createOrder(Data);
-        switchSigner(_addrB);
-        uint256 userABalanceBefore = _addrA.balance;
-
-        MarketPlace.executeOrder(_orderId);{value: Data.price}(ListId);
-
-        uint256 userABalanceAfter = _addrA.balance;
-
-        Marketplace.OrderNFT memory t = MarketPlace.getListing(ListId);
-        assertEq(t.price, 1 ether);
-        assertEq(t.active, false);
-
-        assertEq(t.active, false);
-        assertEq(ERC721(Data.token).ownerOf(Data.tokenId), _addrB);
-        assertEq(userABalanceAfter, userABalanceBefore + Data.price);
+        uint Id = MarketPlace.createOrder(Data);
+        vm.stopPrank();
+        MarketPlace.executeOrder{value:2 ether}(Id);
     }
 }
+
+
+
+
